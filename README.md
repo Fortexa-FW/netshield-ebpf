@@ -1,56 +1,73 @@
 # netshield-ebpf
 
-## Prerequisites
+This is the eBPF/XDP component of the Fortexa firewall's Netshield module. It provides high-performance packet filtering at the kernel level.
 
-1. stable rust toolchains: `rustup toolchain install stable`
-1. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
-1. (if cross-compiling) rustup target: `rustup target add ${ARCH}-unknown-linux-musl`
-1. (if cross-compiling) LLVM: (e.g.) `brew install llvm` (on macOS)
-1. (if cross-compiling) C toolchain: (e.g.) [`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross) (on macOS)
-1. bpf-linker: `cargo install bpf-linker` (`--no-default-features` on macOS)
+## Overview
 
-## Build & Run
+The netshield-ebpf program:
+- Attaches to network interfaces as an XDP program
+- Filters packets based on rules loaded from userspace
+- Provides fast packet processing with minimal overhead
+- Supports logging, blocking, and allowing packets
 
-Use `cargo build`, `cargo check`, etc. as normal. Run your program with:
+## Building
 
+### Prerequisites
+
+1. Rust nightly toolchain: `rustup toolchain install nightly --component rust-src`
+2. bpf-linker: `cargo install bpf-linker`
+
+### Build Commands
+
+Debug build:
 ```shell
-cargo run --release --config 'target."cfg(all())".runner="sudo -E"'
+cargo +nightly build --target bpfel-unknown-none -Z build-std=core
 ```
 
-Cargo build scripts are used to automatically build the eBPF correctly and include it in the
-program.
-
-## Cross-compiling on macOS
-
-Cross compilation should work on both Intel and Apple Silicon Macs.
-
+Release build:
 ```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package netshield-ebpf --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
+cargo +nightly build --target bpfel-unknown-none -Z build-std=core --release
 ```
-The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/netshield-ebpf` can be
-copied to a Linux server or VM and run there.
+
+### Output
+
+The compiled eBPF library will be located at:
+- Debug: `target/bpfel-unknown-none/debug/libnetshield_ebpf.so`
+- Release: `target/bpfel-unknown-none/release/libnetshield_ebpf.so`
+
+## Integration with Fortexa
+
+The main Fortexa application loads this eBPF program using the Aya library and:
+
+1. Loads the `libnetshield_ebpf.so` file
+2. Attaches the XDP program to network interfaces
+3. Updates the rules map with filtering rules from the REST API
+4. Monitors packet filtering results
+
+## Rule Format
+
+Rules are stored in an eBPF map with the following structure:
+
+```rust
+struct Rule {
+    id: u32,
+    enabled: bool,
+    direction: u8,        // 0 = Incoming, 1 = Outgoing
+    action: u8,           // 0 = Block, 1 = Allow, 2 = Drop, 3 = Accept, 4 = Log
+    source_ip: u32,       // IPv4 address, 0 for any
+    destination_ip: u32,  // IPv4 address, 0 for any
+    source_port: u16,     // Port number, 0 for any
+    destination_port: u16, // Port number, 0 for any
+    protocol: u8,         // IP protocol (TCP=6, UDP=17), 0 for any
+}
+```
+
+## Actions
+
+- **Block/Drop**: Drop the packet (XDP_DROP)
+- **Allow/Accept**: Pass the packet to the network stack (XDP_PASS)
+- **Log**: Log packet details and continue processing
 
 ## License
 
-With the exception of eBPF code, netshield-ebpf is distributed under the terms
-of either the [GNU General Public License, Version 3].
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-
-### eBPF
-
-All eBPF code is distributed under either the terms of the
-[GNU General Public License, Version 2] or the [MIT license], at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the GPL-2 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[Apache license]: LICENSE-APACHE
-[MIT license]: LICENSE-MIT
-[GNU General Public License, Version 3]: LICENSE
+This eBPF code is distributed under either the terms of the GNU General Public License, Version 2 or the MIT license, at your option.

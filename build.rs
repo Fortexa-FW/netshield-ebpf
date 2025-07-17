@@ -1,4 +1,6 @@
-use which::which;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
 
 /// Building this crate has an undeclared dependency on the `bpf-linker` binary. This would be
 /// better expressed by [artifact-dependencies][bindeps] but issues such as
@@ -12,6 +14,30 @@ use which::which;
 ///
 /// [bindeps]: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html?highlight=feature#artifact-dependencies
 fn main() {
-    let bpf_linker = which("bpf-linker").unwrap();
-    println!("cargo:rerun-if-changed={}", bpf_linker.to_str().unwrap());
+    // Try to find bpf-linker using which command
+    if let Ok(output) = Command::new("which").arg("bpf-linker").output() {
+        if output.status.success() {
+            let bpf_linker_path = String::from_utf8_lossy(&output.stdout);
+            let bpf_linker_path = bpf_linker_path.trim();
+            println!("cargo:rerun-if-changed={}", bpf_linker_path);
+        }
+    }
+
+    // Fallback: tell cargo to rerun if PATH changes
+    println!("cargo:rerun-if-env-changed=PATH");
+
+    // Post-build: Copy the generated .so file to a .o file for eBPF loading
+    if let Ok(profile) = std::env::var("PROFILE") {
+        let target_dir = format!("target/bpfel-unknown-none/{}", profile);
+        let so_path = format!("{}/libnetshield_ebpf.so", target_dir);
+        let o_path = format!("{}/netshield_xdp.o", target_dir);
+
+        if Path::new(&so_path).exists() {
+            if let Err(e) = fs::copy(&so_path, &o_path) {
+                println!("cargo:warning=Failed to copy eBPF object: {}", e);
+            } else {
+                println!("cargo:warning=eBPF object created: {}", o_path);
+            }
+        }
+    }
 }

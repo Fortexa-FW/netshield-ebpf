@@ -1,10 +1,29 @@
 [package]
 name = "netshield-ebpf"
 version = "0.1.0"
+edition = "2024"
+autobins = false
 
 [dependencies]
-which = "8.0.0"
-aya-ebpf = { git = "https://github.com/aya-rs/aya" }
+aya-ebpf = "0.1"
+aya-log-ebpf = "0.1"
+network-types = "0.0.8"
 
 [lib]
 crate-type = ["cdylib"]
+path = "src/main.rs"
+
+[profile.dev]
+opt-level = 2
+debug = false
+lto = true
+panic = "abort"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+# Custom build to generate .o file
+[package.metadata.bpf]
+target_dir = "target"

@@ -1,4 +1,10 @@
-group_imports = "StdExternalCrate"
-imports_granularity = "Crate"
+# Using stable rustfmt features only
+# To use unstable features, run: cargo +nightly fmt
+
+edition = "2024"
 reorder_imports = true
-unstable_features = true
+
+# Unstable features (require nightly):
+# group_imports = "StdExternalCrate" 
+# imports_granularity = "Crate"
+# unstable_features = true
