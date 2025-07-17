@@ -1,0 +1,10 @@
+[package]
+name = "netshield-ebpf"
+version = "0.1.0"
+
+[dependencies]
+which = "8.0.0"
+aya-ebpf = { git = "https://github.com/aya-rs/aya" }
+
+[lib]
+crate-type = ["cdylib"]
