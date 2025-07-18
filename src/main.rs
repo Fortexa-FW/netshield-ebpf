@@ -166,10 +166,13 @@ fn parse_packet_safe(ctx: &XdpContext) -> Option<PacketInfo> {
 }
 
 fn apply_rules(packet_info: &PacketInfo) -> Result<u32, ()> {
-    // Iterate through all rules in RULES_MAP
+    // Default to PASS if no rules are loaded (safety measure)
     let mut matched_action = None;
     let mut i = 0u32;
+    let mut rules_found = false;
+
     while let Some(raw_rule) = unsafe { RULES_MAP.get(&i) } {
+        rules_found = true;
         // Use bytemuck for safe conversion
         let rule: Rule = match bytemuck::try_from_bytes::<Rule>(raw_rule) {
             Ok(r) => *r,
@@ -195,6 +198,12 @@ fn apply_rules(packet_info: &PacketInfo) -> Result<u32, ()> {
         }
         i += 1;
     }
+
+    // CRITICAL: If no rules are loaded at all, allow all traffic
+    if !rules_found {
+        return Ok(xdp_action::XDP_PASS);
+    }
+
     // Apply the matched action
     match matched_action {
         Some(ACTION_BLOCK) | Some(ACTION_DROP) => Ok(xdp_action::XDP_DROP),
