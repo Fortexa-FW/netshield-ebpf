@@ -14,7 +14,6 @@ use network_types::{
     udp::UdpHdr,
 };
 use netshield_ebpf_common::{Rule, ACTION_BLOCK, ACTION_ALLOW, ACTION_DROP, ACTION_ACCEPT, ACTION_LOG};
-use bytemuck::{Pod, Zeroable};
 
 // Security constants
 const MAX_PACKET_SIZE: u32 = 1514; // Standard Ethernet MTU
@@ -50,28 +49,30 @@ pub fn netshield_ebpf(ctx: XdpContext) -> u32 {
     match try_netshield_ebpf(ctx) {
         Ok(ret) => ret,
         Err(_) => {
-            // Security: increment error counter and drop packet
+            // Increment error counter and pass packet (do not drop on error)
             increment_stat(STAT_INVALID_PACKETS);
-            xdp_action::XDP_DROP
+            xdp_action::XDP_PASS
         }
     }
 }
 
 fn try_netshield_ebpf(ctx: XdpContext) -> Result<u32, ()> {
+    // Increment processed counter
+    increment_stat(STAT_PACKETS_PROCESSED);
+
     // Security check: validate packet size
     let packet_size = ctx.data_end() - ctx.data();
     if packet_size > MAX_PACKET_SIZE as usize {
-        return Err(());
+        increment_stat(STAT_INVALID_PACKETS);
+        return Ok(xdp_action::XDP_PASS);
     }
-
-    increment_stat(STAT_PACKETS_PROCESSED);
 
     // Parse packet headers with bounds checking
     let packet_info = match parse_packet_safe(&ctx) {
         Some(info) => info,
         None => {
             increment_stat(STAT_INVALID_PACKETS);
-            return Ok(xdp_action::XDP_DROP);
+            return Ok(xdp_action::XDP_PASS);
         }
     };
 
@@ -201,16 +202,6 @@ fn apply_rules(packet_info: &PacketInfo) -> Result<u32, ()> {
         Some(ACTION_LOG) => Ok(xdp_action::XDP_PASS), // Log-only: allow for now
         _ => Ok(xdp_action::XDP_PASS), // Default allow
     }
-}
-
-fn is_private_ip(ip: u32) -> bool {
-    // RFC 1918 private address ranges
-    // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-    // Note: ip is already in host byte order from from_be_bytes
-
-    (0x0A000000..=0x0AFFFFFF).contains(&ip) ||  // 10.0.0.0/8
-    (0xAC100000..=0xAC1FFFFF).contains(&ip) ||  // 172.16.0.0/12
-    (0xC0A80000..=0xC0A8FFFF).contains(&ip) // 192.168.0.0/16
 }
 
 fn increment_stat(key: u32) {
