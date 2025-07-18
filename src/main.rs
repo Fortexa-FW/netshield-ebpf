@@ -13,6 +13,8 @@ use network_types::{
     tcp::TcpHdr,
     udp::UdpHdr,
 };
+use netshield_ebpf_common::{Rule, ACTION_BLOCK, ACTION_ALLOW, ACTION_DROP, ACTION_ACCEPT, ACTION_LOG};
+use bytemuck::{Pod, Zeroable};
 
 // Security constants
 const MAX_PACKET_SIZE: u32 = 1514; // Standard Ethernet MTU
@@ -133,7 +135,7 @@ fn parse_packet_safe(ctx: &XdpContext) -> Option<PacketInfo> {
     match ip_hdr.proto {
         IpProto::Tcp => {
             if transport_offset + core::mem::size_of::<TcpHdr>() <= data_end {
-                let tcp_hdr = unsafe { &*(transport_offset as *const TcpHdr) };
+                let tcp_hdr = unsafe { &*( (data as *const u8).add(transport_offset - data) as *const TcpHdr ) };
                 // TCP fields are u16 in network byte order
                 src_port = u16::from_be(tcp_hdr.source);
                 dest_port = u16::from_be(tcp_hdr.dest);
@@ -141,7 +143,7 @@ fn parse_packet_safe(ctx: &XdpContext) -> Option<PacketInfo> {
         }
         IpProto::Udp => {
             if transport_offset + core::mem::size_of::<UdpHdr>() <= data_end {
-                let udp_hdr = unsafe { &*(transport_offset as *const UdpHdr) };
+                let udp_hdr = unsafe { &*( (data as *const u8).add(transport_offset - data) as *const UdpHdr ) };
                 // UDP fields are [u8; 2] arrays
                 src_port = u16::from_be_bytes(udp_hdr.source);
                 dest_port = u16::from_be_bytes(udp_hdr.dest);
@@ -163,24 +165,42 @@ fn parse_packet_safe(ctx: &XdpContext) -> Option<PacketInfo> {
 }
 
 fn apply_rules(packet_info: &PacketInfo) -> Result<u32, ()> {
-    // For now, implement a simple default policy
-    // In a real implementation, you would iterate through rules from RULES_MAP
-
-    // Security: Rate limiting check could go here
-    // Security: Suspicious packet patterns could be detected here
-
-    // Example: Drop packets from private IP ranges going to internet
-    // (This is just an example - real rules would come from userspace)
-    let src_ip = packet_info.src_ip;
-
-    // Check for RFC 1918 private addresses attempting to go to public addresses
-    if is_private_ip(src_ip) && !is_private_ip(packet_info.dest_ip) {
-        // This might be suspicious - could add logging here if needed
-        // Note: aya-log-ebpf logging in newer versions might require context
+    // Iterate through all rules in RULES_MAP
+    let mut matched_action = None;
+    let mut i = 0u32;
+    while let Some(raw_rule) = unsafe { RULES_MAP.get(&i) } {
+        // Use bytemuck for safe conversion
+        let rule: Rule = match bytemuck::try_from_bytes::<Rule>(raw_rule) {
+            Ok(r) => *r,
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        if rule.enabled == 0 {
+            i += 1;
+            continue;
+        }
+        // Match direction, protocol, IPs, ports (0 = any)
+        if (rule.source_ip == 0 || rule.source_ip == packet_info.src_ip)
+            && (rule.destination_ip == 0 || rule.destination_ip == packet_info.dest_ip)
+            && (rule.source_port == 0 || rule.source_port == packet_info.src_port)
+            && (rule.destination_port == 0 || rule.destination_port == packet_info.dest_port)
+            && (rule.protocol == 0 || rule.protocol == packet_info.protocol)
+        {
+            // Found a matching rule
+            matched_action = Some(rule.action);
+            break;
+        }
+        i += 1;
     }
-
-    // Default policy: allow most traffic (rules would override this)
-    Ok(xdp_action::XDP_PASS)
+    // Apply the matched action
+    match matched_action {
+        Some(ACTION_BLOCK) | Some(ACTION_DROP) => Ok(xdp_action::XDP_DROP),
+        Some(ACTION_ALLOW) | Some(ACTION_ACCEPT) => Ok(xdp_action::XDP_PASS),
+        Some(ACTION_LOG) => Ok(xdp_action::XDP_PASS), // Log-only: allow for now
+        _ => Ok(xdp_action::XDP_PASS), // Default allow
+    }
 }
 
 fn is_private_ip(ip: u32) -> bool {

@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-aya-ebpf = { git = "https://github.com/aya-rs/aya", features = ["maps"] }
+aya-ebpf = { version = "0.1.1" }
+bytemuck = { version = "1.14", default-features = false, features = ["derive"] }
 
 [lib]
 path = "src/lib.rs"
