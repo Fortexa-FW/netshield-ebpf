@@ -28,6 +28,7 @@ struct netshield_rule {
 // Direction constants  
 #define NETSHIELD_DIRECTION_INCOMING 0
 #define NETSHIELD_DIRECTION_OUTGOING 1
+#define NETSHIELD_DIRECTION_BOTH     2
 
 // Protocol constants
 #define NETSHIELD_PROTOCOL_ANY  0
