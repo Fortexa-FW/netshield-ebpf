@@ -14,14 +14,14 @@
 
 // Security constants
 #define NETSHIELD_MAGIC 0x4E455453 // "NETS"
-#define MAX_PACKET_SIZE 1514       // Taille max Ethernet
+#define MAX_PACKET_SIZE 1514       // Max size Ethernet
 #define MIN_IP_HEADER_LEN 20
 
 // Packet information structure
 struct packet_info {
-    __u32 src_ip;         // → Adresse IPv4 en format réseau
+    __u32 src_ip;         // → Address IPv4 in network byte order
     __u32 dest_ip;
-    __u16 src_port;       // → Port TCP/UDP en format réseau
+    __u16 src_port;       // → Port TCP/UDP in network byte order
     __u16 dest_port;
     __u8 protocol;        // → Protocole IP (TCP=6, UDP=17, ICMP=1...)
     __u8 padding[3];
@@ -37,7 +37,7 @@ struct secure_rule {
     __u8 protocol;
     __u8 action;           // 0 = allow, 1 = drop
     __u8 enabled;          // Rule enabled flag
-    __u8 padding;          // Toujours laisser padding pour alignement à 4/8 octets
+    __u8 padding;          // Always leave padding for alignment to 4/8 bytes
 };
 
 // Maps
@@ -65,10 +65,10 @@ struct {
 static __always_inline void stats_inc_safe(__u32 index) {
     __u64 *count = bpf_map_lookup_elem(&security_stats, &index);
     if (count) {
-        // Utilisation d'opération atomique
+        // Atomic operation usage
         __sync_fetch_and_add(count, 1);
     } else {
-        // Initialisation en cas d'absence
+        // Initialization if absent
         __u64 initial_val = 1;
         bpf_map_update_elem(&security_stats, &index, &initial_val, BPF_NOEXIST);
     }
@@ -78,7 +78,7 @@ static __always_inline int parse_packet_secure(struct xdp_md *ctx, struct packet
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
 
-    // Vérification taille minimale du paquet
+    // Verification minimal packet size
     if (data + MIN_IP_HEADER_LEN + sizeof(struct ethhdr) > data_end) {
         return 0;
     }
@@ -89,13 +89,13 @@ static __always_inline int parse_packet_secure(struct xdp_md *ctx, struct packet
         return 0;
     }
 
-    // Vérification protocole IPv4 uniquement
+    // Verification IPv4 protocol only
     if (bpf_ntohs(eth->h_proto) != ETH_P_IP) {
         return 0;
     }
 
     struct iphdr *ip = (void *)(eth + 1);
-    // Double vérification avec calcul de longueur IP
+    // Double verification with IP length calculation
     __u8 ip_header_len = (ip->ihl & 0x0F) * 4;
     if (ip_header_len < MIN_IP_HEADER_LEN ||
         (void *)ip + ip_header_len > data_end) {
@@ -108,7 +108,7 @@ static __always_inline int parse_packet_secure(struct xdp_md *ctx, struct packet
     info->src_port = 0;
     info->dest_port = 0;
 
-    // Parsing sécurisé des ports TCP/UDP
+    // Parsing secure TCP/UDP ports
     if (ip->protocol == IPPROTO_TCP) {
         struct tcphdr *tcp = (void *)ip + ip_header_len;
         if ((void *)(tcp + 1) <= data_end) {
@@ -161,7 +161,7 @@ static __always_inline int apply_rules_optimized(struct packet_info *info) {
         else                  { stats_inc_safe(STAT_PACKETS_ALLOWED); return XDP_PASS; }
     }
 
-    // FIXME: Default policy (should be block) : allo
+    // FIXME: Default policy (should be block) : allow
     stats_inc_safe(STAT_PACKETS_ALLOWED);
     return XDP_PASS;
 }
@@ -170,22 +170,22 @@ SEC("xdp")
 int netshield_ebpf_secure(struct xdp_md *ctx) {
     struct packet_info info = {0};
 
-    // Validation taille contexte
+    // Validation context size
     if (!ctx || ctx->data >= ctx->data_end) {
         stats_inc_safe(STAT_INVALID_PACKETS);
-        return XDP_ABORTED; // Plus sûr que XDP_DROP
+        return XDP_ABORTED; // Safer than XDP_DROP
     }
 
-    // Comptage immédiat
+    // Immediate counting
     stats_inc_safe(STAT_PACKETS_PROCESSED);
 
-    // Parsing sécurisé
+    // Secure parsing
     if (!parse_packet_secure(ctx, &info)) {
         stats_inc_safe(STAT_INVALID_PACKETS);
-        return XDP_PASS; // Laisser passer les paquets non-IP
+        return XDP_PASS; // Allow non-IP packets
     }
 
-    // Application des règles
+    // Application of rules
     return apply_rules_optimized(&info);
 }
 
